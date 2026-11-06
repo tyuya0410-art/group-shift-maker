@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>グループ勤務表作成</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#174a78">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="グループ勤務表作成">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;margin:0;background:#f4f6f8;color:#222}
+header{background:#174a78;color:#fff;padding:16px}header h1{font-size:21px;margin:0}
+main{max-width:1100px;margin:auto;padding:14px}.panel{background:#fff;border:1px solid #d8dee5;border-radius:12px;padding:14px;margin:12px 0}
+h2{font-size:18px;margin:0 0 12px}label{display:block;font-weight:600;margin:8px 0 4px}
+input,textarea,select,button{font:inherit}input,textarea,select{width:100%;padding:9px;border:1px solid #b9c3ce;border-radius:7px;background:#fff}
+textarea{min-height:150px}button{border:0;border-radius:8px;background:#1769aa;color:white;padding:10px 14px;cursor:pointer;margin:4px 4px 4px 0}
+button.secondary{background:#596775}button.danger{background:#b33a3a}.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1;min-width:130px}
+.member-list{display:flex;gap:6px;flex-wrap:wrap}.chip{background:#e8f1fa;border-radius:20px;padding:5px 10px;font-size:13px}
+table{border-collapse:collapse;width:100%;background:white;min-width:1000px}th,td{border:1px solid #aeb8c2;padding:5px;text-align:center;white-space:nowrap}th{background:#e9eef3;position:sticky;top:0;z-index:2}
+th:first-child,td:first-child{position:sticky;left:0;min-width:90px;z-index:3;background:#fff}
+th:first-child{background:#e9eef3;z-index:4}
+.table-wrap{overflow:auto;max-height:65vh}.muted{color:#66717c;font-size:13px}.saved-item{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid #ddd;padding:9px 0}
+@media print{header,.no-print{display:none!important}body{background:white}main{max-width:none;padding:0}.panel{border:0;padding:0}.table-wrap{max-height:none;overflow:visible}table{min-width:0;font-size:9px}th,td{padding:2px}}
+</style>
+</head>
+<body>
+<header><h1>グループ勤務表作成</h1><button id="installApp" class="secondary" style="margin-top:10px">ホーム画面に追加</button><p id="installHelp" style="font-size:12px;margin:6px 0 0">Android Chromeでは、メニュー ⋮ →「アプリをインストール」または「ホーム画面に追加」から追加できます。</p></header>
+<main>
+<section class="panel">
+<h2>1. グループ登録</h2>
+<div class="row"><div><label>グループ名</label><input id="groupName" placeholder="例：EC1グループ"></div><div style="align-self:end"><button id="addGroup">グループを登録</button></div></div>
+<label>登録済みグループ</label><select id="groups"></select>
+<div class="row"><div><label>メンバー名（複数可・1行に1名）</label><textarea id="memberNames" placeholder="例：山田太郎&#10;佐藤花子"></textarea></div><div style="align-self:end"><button id="addMembers">メンバーを追加</button><button class="secondary" id="renameGroup">グループ名変更</button><button class="danger" id="deleteGroup">グループ削除</button></div></div>
+<div id="members" class="member-list"></div>
+<p class="muted">登録した氏名は空白（半角・全角）を除いて照合します。勤務表から7桁の社員番号も読み取ります。</p>
+</section>
+<section class="panel">
+<h2>2. 勤務表データを貼り付け</h2>
+<label>勤務表のテキスト</label><textarea id="sourceText" placeholder="PDFなどからコピーした勤務表の文字・表データを貼り付けてください。"></textarea>
+<div class="row"><div><label>勤務表PDF / テキストファイル（テキストPDF対応）</label><input type="file" id="fileInput" accept=".txt,.csv,.pdf"></div><div><label>年</label><input type="number" id="year" value="2026" min="2000" max="2100"></div><div><label>月</label><select id="month"></select></div></div>
+<button id="make">選択グループの勤務表を作成</button><button class="secondary" id="clearText">入力をクリア</button>
+<p class="muted">※画像としてスキャンされたPDFは読み取れません。文字を選択・コピーできるPDFまたはテキストを使用してください。</p>
+</section>
+<section class="panel">
+<h2>3. 作成したグループ勤務表</h2>
+<div id="resultInfo" class="muted">勤務表データを貼り付けて「作成」を押してください。</div>
+<div class="no-print"><button id="saveCurrent">この勤務表を保存</button><button class="secondary" id="csv">CSVで保存</button><button class="secondary" onclick="window.print()">印刷 / PDF保存</button></div>
+<div class="table-wrap" id="result"></div>
+</section>
+<section class="panel">
+<h2>4. 保存した勤務表</h2>
+<p class="muted">この端末・このブラウザ内に保存されます。別の端末とは自動共有されません。</p>
+<div id="savedList"></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const GROUP_KEY='gsm_groups_v2', SAVED_KEY='gsm_saved_v2';
+let groups=JSON.parse(localStorage.getItem(GROUP_KEY)||'[]'), currentRows=[], currentTitle='';
+for(let m=1;m<=12;m++) $('month').add(new Option(m+'月',m));
+$('month').value=11;
+function persist(){localStorage.setItem(GROUP_KEY,JSON.stringify(groups));}
+function selected(){return groups.find(g=>g.id===$('groups').value);}
+function refreshGroups(){
+ const sel=$('groups'), old=sel.value;sel.innerHTML='';
+ groups.forEach(g=>sel.add(new Option(g.name,g.id)));
+ if(groups.some(g=>g.id===old))sel.value=old;
+ renderMembers();
+}
+function renderMembers(){
+ const g=selected(), host=$('members');host.innerHTML='';
+ if(!g)return;
+ g.members.forEach((n,i)=>{const s=document.createElement('span');s.className='chip';s.textContent=n+' ';const b=document.createElement('button');b.textContent='×';b.className='danger';b.style.padding='2px 7px';b.onclick=()=>{g.members.splice(i,1);persist();renderMembers();};s.append(b);host.append(s);});
+}
+$('addGroup').onclick=()=>{let n=$('groupName').value.trim();if(!n)return alert('グループ名を入力してください。');groups.push({id:Date.now().toString(),name:n,members:[]});$('groupName').value='';persist();refreshGroups();$('groups').value=groups.at(-1).id;renderMembers();};
+$('groups').onchange=renderMembers;
+$('addMembers').onclick=()=>{let g=selected();if(!g)return alert('先にグループを登録してください。');let names=$('memberNames').value.split(/\n/).map(x=>x.trim()).filter(Boolean);names.forEach(n=>{if(!g.members.includes(n))g.members.push(n)});$('memberNames').value='';persist();renderMembers();};
+$('renameGroup').onclick=()=>{let g=selected();if(!g)return;let n=prompt('新しいグループ名',g.name);if(n&&n.trim()){g.name=n.trim();persist();refreshGroups();}};
+$('deleteGroup').onclick=()=>{let g=selected();if(!g)return;if(confirm(g.name+'を削除しますか？')){groups=groups.filter(x=>x.id!==g.id);persist();refreshGroups();}};
+$('clearText').onclick=()=>{$('sourceText').value='';};
+$('fileInput').onchange=async e=>{
+ const f=e.target.files[0];if(!f)return;
+ if(f.name.toLowerCase().endsWith('.pdf')){alert('PDFの自動読み取りには文字データを抽出できるPDFが必要です。PDF内の文字をコピーして貼り付けてください。');return;}
+ $('sourceText').value=await f.text();
+};
+function normalizeName(value){
+ // 半角・全角スペース、タブなどの空白をすべて無視して照合
+ return String(value??'').normalize('NFKC').replace(/[\s\u3000]+/g,'');
+}
+function splitRosterLine(line){
+ // タブ区切りは空欄セルを維持。PDFの複数スペース区切りにも対応
+ if(line.includes("\t")) return line.split("\t").map(x=>x.trim());
+ if(/ {2,}/.test(line)) return line.trim().split(/ {2,}/).map(x=>x.trim());
+ return line.trim().split(/\s+/).map(x=>x.trim());
+}
+function findSevenDigitNumber(value){
+ const match=String(value??'').normalize('NFKC').match(/(?:^|\D)(\d{7})(?=\D|$)/);
+ return match ? match[1] : '';
+}
+function parseRows(){
+ const g=selected();
+ if(!g||!g.members.length){alert('グループとメンバーを登録してください。');return [];}
+ const lines=$('sourceText').value.split(/\r?\n/).filter(l=>l.trim());
+ const found=[];
+ g.members.forEach(name=>{
+   const target=normalizeName(name); let match=null;
+   for(const line of lines){
+     const cols=splitRosterLine(line);
+     // セル単位で照合し、PDF抽出時に氏名の途中へ空白が入った場合は隣接セルも連結して確認
+     let nameIndex=cols.findIndex(c=>normalizeName(c).includes(target));
+     let span=1;
+     if(nameIndex<0){
+       outer: for(let i=0;i<cols.length;i++){
+         let joined='';
+         for(let j=i;j<Math.min(cols.length,i+4);j++){
+           joined+=normalizeName(cols[j]);
+           if(joined.includes(target)){nameIndex=i;span=j-i+1;break outer;}
+         }
+       }
+     }
+     if(nameIndex>=0){match={line,cols,nameIndex,span};break;}
+     // 列区切りが失われたテキストにも対応
+     if(normalizeName(line).includes(target)){match={line,cols:[line],nameIndex:0,span:1};break;}
+   }
+   if(match){
+     const afterName=match.cols.slice(match.nameIndex+match.span);
+     let empIndex=-1, employeeNo='';
+     for(let i=0;i<afterName.length;i++){
+       employeeNo=findSevenDigitNumber(afterName[i]);
+       if(employeeNo){empIndex=i;break;}
+     }
+     // 社員番号が同じセルに勤務コードと連結されている場合も番号以降を切り出す
+     let codeCells=[];
+     if(empIndex>=0){
+       codeCells=afterName.slice(empIndex+1);
+       const empCell=String(afterName[empIndex]).normalize('NFKC');
+       const pos=empCell.indexOf(employeeNo);
+       const tail=pos>=0?empCell.slice(pos+employeeNo.length).trim():'';
+       if(tail) codeCells.unshift(tail);
+     } else {
+       codeCells=afterName.slice();
+     }
+     while(codeCells.length && /^(社員番号|社員No\.?|番号|氏名|名前|所属|グループ)$/.test(codeCells[0])) codeCells.shift();
+     found.push({name,employeeNo,line:match.line,cells:codeCells});
+   }
+ });
+ return found;
+}
+function extractCodes(row){
+ let vals=row.cells || [];
+ if(vals.length===1) vals=vals[0].trim().split(/\s+/);
+ return vals.slice(0,31).map(v=>String(v??'').trim());
+}
+function build(){
+ const g=selected();if(!g)return alert('グループを選択してください。');
+ const rows=parseRows();if(!rows.length)return alert('登録メンバーの氏名が貼り付けデータ内に見つかりません。氏名と勤務表の文字を確認してください。');
+ const y=+$('year').value,m=+$('month').value,monthDays=new Date(y,m,0).getDate();
+ currentTitle=`${g.name} ${y}年${m}月`;
+ currentRows=rows.map(r=>({name:r.name,employeeNo:r.employeeNo||'',codes:extractCodes(r)}));
+ $('resultInfo').textContent=`${currentTitle}（${rows.length}名）※カレンダーは1日～31日固定。${monthDays+1}日以降は空欄です。`;
+ renderTable(currentRows,currentTitle,monthDays);
+}
+function renderTable(rows,title,monthDays){
+ let h='<table><thead><tr><th>氏名</th><th>社員番号</th>'+Array.from({length:31},(_,i)=>`<th>${i+1}</th>`).join('')+'</tr></thead><tbody>';
+ rows.forEach(r=>{h+='<tr><th>'+esc(r.name)+'</th><td>'+esc(r.employeeNo||'')+'</td>';for(let d=0;d<31;d++){h+='<td>'+(d<monthDays?esc(r.codes[d]||''):'')+'</td>';}h+='</tr>';});
+ $('result').innerHTML=h+'</tbody></table>';
+}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+$('make').onclick=build;
+$('saveCurrent').onclick=()=>{
+ if(!currentRows.length)return alert('先に勤務表を作成してください。');
+ const all=JSON.parse(localStorage.getItem(SAVED_KEY)||'[]');
+ all.unshift({id:Date.now().toString(),title:currentTitle,savedAt:new Date().toLocaleString('ja-JP'),rows:currentRows,year:+$('year').value,month:+$('month').value});
+ try{localStorage.setItem(SAVED_KEY,JSON.stringify(all.slice(0,50)));renderSaved();alert('勤務表を保存しました。');}catch(e){alert('保存できませんでした。保存容量を確認してください。');}
+};
+function renderSaved(){
+ const host=$('savedList'),all=JSON.parse(localStorage.getItem(SAVED_KEY)||'[]');host.innerHTML='';
+ if(!all.length){host.textContent='保存された勤務表はありません。';return;}
+ all.forEach(item=>{
+  const div=document.createElement('div');div.className='saved-item';
+  const span=document.createElement('span');span.textContent=item.title+'（'+item.savedAt+'）';
+  const open=document.createElement('button');open.textContent='開く';open.onclick=()=>{currentRows=item.rows;currentTitle=item.title;$('year').value=item.year;$('month').value=item.month;const md=new Date(item.year,item.month,0).getDate();$('resultInfo').textContent=item.title+'（保存データ）';renderTable(item.rows,item.title,md);window.scrollTo({top:$('result').getBoundingClientRect().top+window.scrollY-20,behavior:'smooth'});};
+  const del=document.createElement('button');del.textContent='削除';del.className='danger';del.onclick=()=>{if(confirm('この勤務表を削除しますか？')){localStorage.setItem(SAVED_KEY,JSON.stringify(all.filter(x=>x.id!==item.id)));renderSaved();}};
+  div.append(span,open,del);host.append(div);
+ });
+}
+$('csv').onclick=()=>{
+ if(!currentRows.length)return alert('先に勤務表を作成してください。');
+ const y=+$('year').value,m=+$('month').value,md=new Date(y,m,0).getDate();
+ let lines=[['氏名','社員番号',...Array.from({length:31},(_,i)=>String(i+1))]];
+ currentRows.forEach(r=>lines.push([r.name,r.employeeNo||'',...Array.from({length:31},(_,i)=>i<md?(r.codes[i]||''):'')]));
+ const csv='\ufeff'+lines.map(row=>row.map(x=>'"'+String(x).replace(/"/g,'""')+'"').join(',')).join('\r\n');
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download=`${currentTitle}.csv`;a.click();URL.revokeObjectURL(a.href);
+};
+refreshGroups();renderSaved();
+// HTTPSで公開した場合にホーム画面追加・オフライン起動を有効化
+let installPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('installApp').style.display='inline-block';});
+$('installApp').onclick=async()=>{
+ if(installPrompt){installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;}
+ else {alert('ホーム画面に追加するには、このアプリ一式をHTTPS対応のWebサイトにアップロードして開いてください。Android Chromeの右上メニュー ⋮ から「アプリをインストール」または「ホーム画面に追加」を選びます。');}
+};
+if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+ window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+}
+</script>
+</body></html>
